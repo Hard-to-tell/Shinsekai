@@ -17,9 +17,13 @@ from application.session_behavior.casting import CastingMap
 from application.session_behavior.prefetch import SpeculativePrefetchCoordinator
 from application.session_behavior.runtime_binding import (
     BehaviorTurnContextProvider,
+    after_behavior_transition_committed,
+    auto_attach_bound_behavior,
+    notify_behavior_session_ready,
     resolve_character_media_handler,
     resolve_opencc,
     resolve_ui_worker,
+    sync_casting_media_policy,
 )
 from application.session_behavior.protocol import (
     BehaviorCommand,
@@ -31,6 +35,7 @@ from application.session_behavior.protocol import (
     parse_behavior_command,
 )
 from core.chat_history.behavior_state_models import (
+    BehaviorCommitResult,
     BehaviorStateSnapshot,
     BehaviorVersionConflictError,
 )
@@ -130,29 +135,13 @@ class SessionBehaviorCapability(BaseSessionCapability):
             if behavior is not None and state is not None
             else None
         )
-        llm_mgr = self._llm_manager
-        if llm_mgr is not None and hasattr(llm_mgr, "set_speaker_media_policy"):
-            if casting is not None:
-                def _speaker_requires_media(
-                    speaker_name: str,
-                    _casting: CastingMap = casting,
-                ) -> bool:
-                    return _casting.speaker_requires_media(
-                        speaker_name,
-                        cc=resolve_opencc(self._runtime_components, self._app_runtime),
-                    )
-
-                llm_mgr.set_speaker_media_policy(
-                    _speaker_requires_media,
-                    casting.bound_speaker_names(),
-                )
-            else:
-                llm_mgr.set_speaker_media_policy(None, ())
-        handler = self._resolve_character_media_handler()
-        if handler is not None and hasattr(handler, "casting_map_provider"):
-            handler.casting_map_provider = (
-                self._active_casting_map if casting is not None else None
-            )
+        sync_casting_media_policy(
+            self._llm_manager,
+            casting,
+            media_handler=self._resolve_character_media_handler(),
+            opencc_provider=lambda: resolve_opencc(self._runtime_components, self._app_runtime),
+            active_casting_provider=self._active_casting_map,
+        )
 
     def _ensure_compact_hook(self) -> None:
         if self._compact_hook_registered or self._hook_dispatcher is None:
@@ -225,6 +214,8 @@ class SessionBehaviorCapability(BaseSessionCapability):
                 getattr(startup, "llm_manager", None), "hook_dispatcher", None
             )
         self._bind_ui_worker()
+        if self._behavior is None:
+            auto_attach_bound_behavior(self, context)
         if self._behavior is not None:
             self._ensure_compact_hook()
             if self._state_store is not None:
@@ -247,6 +238,9 @@ class SessionBehaviorCapability(BaseSessionCapability):
             latest = self._state_store.get_latest_state(self._current_branch())
             if latest is not None:
                 self._sync_media_policy(latest.state)
+
+    def on_session_ready(self) -> None:
+        notify_behavior_session_ready(self)
 
     def is_free_text_allowed(self) -> bool:
         with self._lock:
@@ -297,7 +291,7 @@ class SessionBehaviorCapability(BaseSessionCapability):
         branch_id: str,
         expected_state_version: int,
         transition: BehaviorTransition,
-    ) -> BehaviorStateEnvelope:
+    ) -> tuple[BehaviorStateEnvelope, BehaviorCommitResult]:
         result = store.commit_behavior_turn(
             branch_id=branch_id,
             behavior_id=behavior.behavior_id,
@@ -308,9 +302,10 @@ class SessionBehaviorCapability(BaseSessionCapability):
         if transition.invalidate_prefetch and self._prefetch is not None:
             self._prefetch.invalidate_all()
         self._sync_media_policy(result.snapshot.state)
-        return transition.envelope or behavior.describe_state(
+        envelope = transition.envelope or behavior.describe_state(
             result.snapshot.state, result.snapshot.state_version
         )
+        return envelope, result
 
     def handle_behavior_command(self, raw_payload: object) -> CommandResolution:
         """Execute one behavior command with idempotency dedupe and OCC enforcement."""
@@ -367,7 +362,7 @@ class SessionBehaviorCapability(BaseSessionCapability):
                 return outcome
 
             try:
-                envelope = self._commit_transition(
+                envelope, commit_result = self._commit_transition(
                     behavior=behavior,
                     store=store,
                     branch_id=branch_id,
@@ -393,6 +388,12 @@ class SessionBehaviorCapability(BaseSessionCapability):
             accepted = CommandResolution(status="accepted", envelope=envelope)
             self._idempotency.record(branch_id, command.command_id, accepted)
         self._emit_replace(envelope)
+        after_behavior_transition_committed(
+            behavior,
+            branch_id=branch_id,
+            state_version=commit_result.snapshot.state_version,
+            appended_turn_seqs=commit_result.appended_turn_seqs,
+        )
         return accepted
 
     def on_playback_idle(self, turn: Any = None) -> BehaviorStateEnvelope | None:
@@ -414,7 +415,7 @@ class SessionBehaviorCapability(BaseSessionCapability):
             )
             if transition is None:
                 return None
-            envelope = self._commit_transition(
+            envelope, commit_result = self._commit_transition(
                 behavior=behavior,
                 store=store,
                 branch_id=branch_id,
@@ -422,6 +423,12 @@ class SessionBehaviorCapability(BaseSessionCapability):
                 transition=transition,
             )
         self._emit_replace(envelope)
+        after_behavior_transition_committed(
+            behavior,
+            branch_id=branch_id,
+            state_version=commit_result.snapshot.state_version,
+            appended_turn_seqs=commit_result.appended_turn_seqs,
+        )
         return envelope
 
     def on_before_compact(self, context: BeforeCompactContext) -> None:
@@ -477,6 +484,9 @@ class SessionBehaviorCapability(BaseSessionCapability):
             return envelope.to_camel_dict()
 
     def on_shutdown(self) -> None:
+        shutdown = getattr(self._behavior, "shutdown", None)
+        if callable(shutdown):
+            shutdown()
         if self._prefetch is not None:
             self._prefetch.shutdown()
 

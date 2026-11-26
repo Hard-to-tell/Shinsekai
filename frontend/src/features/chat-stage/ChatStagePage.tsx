@@ -63,6 +63,7 @@ import {
   ToolConfirmationLayer,
 } from "./components/StageLayers";
 import { TopStageTools } from "./components/TopStageTools";
+import { NovelChapterDrawer, parseNovelHud } from "./components/NovelChapterDrawer";
 import { StoryDebugPanel } from "./components/StoryDebugPanel";
 import "./chat-stage.css";
 import { buildChatStageViewModel, chatStageReducer, emptyChatState } from "./chatState";
@@ -179,6 +180,7 @@ export function ChatStagePage() {
   const soundPlayerRef = useRef<ChatSoundPlayerHandle>(null);
   const historyReplayGenerationRef = useRef(0);
   const [conversationEditorOpen, setConversationEditorOpen] = useState(false);
+  const [novelDrawerOpen, setNovelDrawerOpen] = useState(false);
   const [runtimeModeOpen, setRuntimeModeOpen] = useState(false);
   const [dialogControlsLocked, setDialogControlsLocked] = useState(false);
   const dialogToolbarLayerRef = useRef<HTMLDivElement>(null);
@@ -1122,8 +1124,18 @@ export function ChatStagePage() {
           autoHide={!activeReplay && runtimeConfig.immersiveMode && runtimeConfig.autoHideTopTools}
           hidden={!viewModel.layers.toolbar || miniAvatarActive}
           miniAvatarDisabled={Boolean(activeReplay || state.replay)}
+          novelProgressLabel={(() => {
+            const hud = parseNovelHud(viewModel.behavior);
+            if (!hud) return undefined;
+            return t("novel.drawer.progress", {
+              chapter: Math.min(hud.chapterIndex + 1, hud.totalChapters),
+              current: Math.min(hud.chunkIndex + 1, hud.totalChunks),
+              total: hud.totalChunks,
+            });
+          })()}
           onCloseDesktopWindow={closeSurface}
           onEnterMiniAvatar={remoteMobileAccess ? undefined : enterMiniAvatarMode}
+          onOpenNovelChapters={parseNovelHud(viewModel.behavior) ? () => setNovelDrawerOpen(true) : undefined}
           onOpenPluginPage={openPluginPage}
           onOpenRuntimeMode={!isTauriDesktop() ? () => setRuntimeModeOpen(true) : undefined}
           onOpenWorkspace={
@@ -1413,6 +1425,29 @@ export function ChatStagePage() {
             proactiveEnabled={state.perception?.proactiveEnabled ?? true}
             scope={ocrScope}
             stream={screenShareStream}
+          />
+        ) : null}
+        {viewModel.behavior && parseNovelHud(viewModel.behavior) ? (
+          <NovelChapterDrawer
+            behavior={viewModel.behavior}
+            onClose={() => setNovelDrawerOpen(false)}
+            onSelectChapter={(chapterIndex) => {
+              const commandId =
+                typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+                  ? crypto.randomUUID()
+                  : `jump-${Date.now()}`;
+              setNovelDrawerOpen(false);
+              void sendCommand({
+                type: "behavior-command",
+                payload: {
+                  commandId,
+                  action: "jump_chapter",
+                  expectedStateVersion: viewModel.behavior!.stateVersion,
+                  payload: { chapterIndex },
+                },
+              });
+            }}
+            open={novelDrawerOpen}
           />
         ) : null}
         <ChatConfigDialog

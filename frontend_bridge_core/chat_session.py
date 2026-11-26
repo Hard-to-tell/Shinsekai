@@ -344,7 +344,10 @@ def _launch_chat_locked(
         state.config_manager, player_character, body.get("userDisplayName"),
     )
     raw_memory_mode = str(body.get("memoryMode") or "").strip()
-    if not raw_memory_mode and body.get("storyPath"):
+    is_novel_launch = (
+        body.get("behaviorId") == "novel_theater" or bool(body.get("novelDocId"))
+    )
+    if not raw_memory_mode and (body.get("storyPath") or is_novel_launch):
         raw_memory_mode = "isolated"
     raw_initial_outfits = body.get("initialOutfits")
     session_base = {
@@ -409,7 +412,11 @@ def _launch_chat_locked(
             effect_context=effect_context,
             history_file=history_path.as_posix(),
             init_sprite_path=init_sprite_path,
-            show_initial_sprite=body.get("showInitialSprite", True) is not False,
+            show_initial_sprite=(
+                bool(characters)
+                if (is_novel_launch and "showInitialSprite" not in body)
+                else body.get("showInitialSprite", True) is not False
+            ),
             room_id=room_id,
             selected_bg=str(body.get("backgroundName") or ""),
             system_template=system_template,

@@ -149,6 +149,34 @@ def update_conversation_settings(
     return details
 
 
+def update_conversation_launch_fields(
+    state: Any,
+    conversation_id: str,
+    patch: Mapping[str, Any],
+) -> dict:
+    """Persist structured updates into a saved conversation's launch dictionary."""
+    if not isinstance(patch, Mapping):
+        raise ValueError("conversation launch patch must be an object")
+    store = _lib._conversation_store(state)
+    with _lib._metadata_lock:
+        record = _lib._record(state, conversation_id)
+        launch = record.get("launch")
+        launch_dict = dict(launch) if isinstance(launch, dict) else {}
+        for key, value in patch.items():
+            launch_dict[str(key)] = value
+        record["launch"] = launch_dict
+        if store is not None:
+            from core.storage.stores.conversation_store import ConversationRecord
+
+            store.put(
+                conversation_id,
+                ConversationRecord.from_legacy_dict(conversation_id, record),
+            )
+        else:
+            _lib._write(_lib._directory(state) / f"{conversation_id}.json", record)
+        return _lib._details(record)
+
+
 def update_conversation_character(
     state: Any, old_name: str, new_name: str | None = None
 ) -> None:

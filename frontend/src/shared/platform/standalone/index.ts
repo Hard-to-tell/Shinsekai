@@ -3,6 +3,7 @@ import { DEFAULT_SPRITE_GROUP, LLM_PROVIDER_QWEN, LLM_PROVIDER_SILICONFLOW, TAG_
 import { setActiveFrontendLanguage, translateRuntimeMessage } from "../../i18n/runtimeLanguage";
 import { createAgentPreviewPlatform } from "../agentPreviewPlatform";
 import { createChatPreviewPlatform } from "../slices/chatPreviewPlatform";
+import { createNovelPreviewPlatform } from "../slices/novelPreviewPlatform";
 import { createKnowledgePreviewPlatform } from "../slices/knowledgePreviewPlatform";
 import { createPerceptionPreviewPlatform } from "../slices/perceptionPreviewPlatform";
 import { createMcpPreviewPlatform, createPluginsPreviewPlatform } from "../slices/pluginPreviewPlatform";
@@ -1365,6 +1366,7 @@ export function createStandalonePlatform(options?: { target?: RuntimeTarget }): 
     perception: createPerceptionPreviewPlatform(ctx),
     plugins: createPluginsPreviewPlatform(),
     runtime: createRuntimePreviewPlatform(),
+    novel: createNovelPreviewPlatform(ctx),
     story: createStoryPreviewPlatform(
       () => clone(ctx.getChat()),
       (snapshot) => ctx.setChat(snapshot),

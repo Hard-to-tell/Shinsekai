@@ -16,6 +16,7 @@ import type {
 } from "../../shared/platform/types";
 
 export const templateVoiceLanguages = [
+  { labelKey: "system.asr.langAuto", value: "auto" },
   { labelKey: "system.asr.langJa", value: "ja" },
   { labelKey: "system.asr.langEn", value: "en" },
   { labelKey: "system.asr.langZh", value: "zh" },
